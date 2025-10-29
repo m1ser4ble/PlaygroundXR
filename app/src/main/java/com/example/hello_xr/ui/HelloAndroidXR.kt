@@ -36,7 +36,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.xr.compose.platform.LocalSession
 import androidx.xr.compose.platform.LocalSpatialCapabilities
 import androidx.xr.compose.platform.LocalSpatialConfiguration
-import androidx.xr.compose.platform.SpatialCapabilities
+
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.subspace.SceneCoreEntity
 import androidx.xr.compose.subspace.SceneCoreEntitySizeAdapter
@@ -64,6 +64,7 @@ import androidx.xr.scenecore.Entity
 import androidx.xr.scenecore.GltfModel
 import androidx.xr.scenecore.GltfModelEntity
 import androidx.xr.scenecore.SoundFieldAttributes
+import androidx.xr.scenecore.SpatialCapabilities
 import androidx.xr.scenecore.SpatialMediaPlayer
 import androidx.xr.scenecore.SpatializerConstants
 import androidx.xr.scenecore.scene
@@ -231,23 +232,32 @@ fun FloatingObjects() {
 
 
 @Composable
-fun CreateMeidaPlayer() {
+fun CreateMediaPlayer() {
     // Check spatial capabilities before using spatial audio
     val activity = LocalActivity.current
     val session = LocalSession.current
+
     if (session == null) return
-    if (session.scene.spatialCapabilities.hasCapability(SpatialCapabilities.SPATIAL_CAPABILITY_SPATIAL_AUDIO)) {
+    val context = LocalContext.current
+    var mediaPlayer = MediaPlayer.create(context, R.raw.test)
+    mediaPlayer.start() // no need to call prepare(); create() does that for you
+
+    //return
+
+    // I dont know why it is not working
+    /*if (session.scene.spatialCapabilities.hasCapability(SpatialCapabilities.SPATIAL_CAPABILITY_SPATIAL_AUDIO)) {
         // The session has spatial audio capabilities
-        val context = LocalContext.current
+
         val soundFieldAttributes =
             SoundFieldAttributes(SpatializerConstants.AMBISONICS_ORDER_FIRST_ORDER)
-
         val mediaPlayer = MediaPlayer()
 
-        val soundFieldAudio = context.assets.openFd("sounds/foa_basketball_16bit.wav")
+        //val soundFieldAudio = context.assets.openFd("sounds/test.mp3")
 
+        val soundFieldAudio  = context.resources.openRawResourceFd(R.raw.test)
         mediaPlayer.reset()
         mediaPlayer.setDataSource(soundFieldAudio)
+
 
         val audioAttributes =
             AudioAttributes.Builder()
@@ -260,14 +270,15 @@ fun CreateMeidaPlayer() {
             mediaPlayer,
             soundFieldAttributes
         )
-
         mediaPlayer.setAudioAttributes(audioAttributes)
         mediaPlayer.prepare()
         mediaPlayer.start()
+        Log.d("CreateMeidaPlayer", "me called is playing? ${mediaPlayer.isPlaying}")
+
     } else {
         // The session does not have spatial audio capabilities
     }
-}
+}*/
 
 @Composable
 fun HelloAndroidXRApp() {
@@ -275,6 +286,7 @@ fun HelloAndroidXRApp() {
     EnvironmentControls()
 
     FloatingObjects()
+    //CreateMediaPlayer()
     /*
     if (LocalSpatialCapabilities.current.isSpatialUiEnabled) {
         SpatialLayout(

@@ -56,7 +56,7 @@ dependencies {
     implementation(libs.androidx.compose)
     implementation(libs.androidx.runtime)
     implementation(libs.androidx.scenecore)
-    implementation("com.google.mediapipe:tasks-vision")
+    implementation("com.google.mediapipe:tasks-vision:0.10.26")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
