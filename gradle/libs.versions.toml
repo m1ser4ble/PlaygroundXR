@@ -13,6 +13,7 @@ composeBom = "2025.07.00"
 compose = "1.0.0-alpha05"
 runtime = "1.0.0-alpha05"
 scenecore = "1.0.0-alpha05"
+cameraView = "1.5.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,6 +36,10 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 androidx-compose = { group = "androidx.xr.compose", name = "compose", version.ref = "compose" }
 androidx-runtime = { group = "androidx.xr.runtime", name = "runtime", version.ref = "runtime" }
 androidx-scenecore = { group = "androidx.xr.scenecore", name = "scenecore", version.ref = "scenecore" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "cameraView" }
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "cameraView" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "cameraView" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "cameraView" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
