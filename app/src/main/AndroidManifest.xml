@@ -8,6 +8,11 @@
 
     <!-- Declare permissions -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.HAND_TRACKING" />
+    <uses-permission android:name="android.permission.HEAD_TRACKING"/>
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+
+
 
     <application
         android:allowBackup="true"

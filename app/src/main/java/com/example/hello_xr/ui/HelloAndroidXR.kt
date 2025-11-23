@@ -2,8 +2,9 @@ package com.example.hello_xr.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.Context
+import android.content.ContentResolver
 import android.media.MediaPlayer
+import android.net.Uri
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
@@ -19,9 +20,10 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.ExperimentalComposeApi
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,21 +31,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.xr.arcore.Hand
 import androidx.xr.compose.platform.LocalSession
 import androidx.xr.compose.platform.LocalSpatialCapabilities
+import androidx.xr.compose.platform.LocalSpatialConfiguration
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.subspace.SceneCoreEntity
-import androidx.xr.compose.subspace.SpatialPanel
+import androidx.xr.compose.subspace.SpatialExternalSurface
+import androidx.xr.compose.subspace.StereoMode
 import androidx.xr.compose.subspace.layout.SubspaceModifier
 import androidx.xr.compose.subspace.layout.fillMaxSize
+import androidx.xr.compose.subspace.layout.height
 import androidx.xr.compose.subspace.layout.offset
 import androidx.xr.compose.subspace.layout.scale
-import androidx.xr.runtime.Session
+import androidx.xr.compose.subspace.layout.width
+import androidx.xr.runtime.Config
+import androidx.xr.runtime.FieldOfView
+import androidx.xr.runtime.HandJointType
+import androidx.xr.runtime.SessionConfigureSuccess
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
@@ -51,11 +62,20 @@ import androidx.xr.scenecore.Entity
 import androidx.xr.scenecore.GltfModel
 import androidx.xr.scenecore.GltfModelEntity
 import androidx.xr.scenecore.scene
-import com.example.hello_xr.HandLandmarkerHelper
 import com.example.hello_xr.R
+import com.example.hello_xr.model.ModelType
+import com.example.hello_xr.model.RotatingObjectGltfModelCache
+import com.example.hello_xr.util.HandLandmarkerHelper
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.vision.core.RunningMode
-import java.io.InputStream
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmark
 import java.util.concurrent.Executors
+import kotlin.collections.get
+import kotlin.div
+import kotlin.math.absoluteValue
+import kotlin.text.toFloat
+import kotlin.times
+import kotlinx.coroutines.flow.collect
 
 @Composable
 fun LogCapabilities() {
@@ -75,14 +95,67 @@ fun LogCapabilities() {
 fun EnvironmentControls(modifier: Modifier = Modifier) {
   val activity = LocalActivity.current
   val session = LocalSession.current
+
   if (session != null && activity is ComponentActivity) {
     val uiIsSpatialized = LocalSpatialCapabilities.current.isSpatialUiEnabled
 
     val xrSession = session
     // fullspace mode
-    xrSession.scene.requestFullSpaceMode()
+    LocalSpatialConfiguration.current.requestFullSpaceMode()
+
+    // xrSession.scene.requestFullSpaceMode()
+
     // requestPassthrough
     xrSession.scene.spatialEnvironment.preferredPassthroughOpacity = 1f
+  }
+}
+
+@SuppressLint("RestrictedApi")
+@Composable
+fun UserHandTracking(onPoseUpdated: (Pose?) -> Unit) {
+  val session = LocalSession.current
+  if (session == null) return
+
+  var hasPermission by remember { mutableStateOf(false) }
+
+  val permissionLauncher =
+    rememberLauncherForActivityResult(
+      contract = ActivityResultContracts.RequestPermission(),
+      onResult = { granted -> hasPermission = granted }
+    )
+  // Composable이 처음 시작될 때 권한을 요청합니다.
+  LaunchedEffect(Unit) {
+    val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
+    permissionLauncher.launch(HAND_TRACKING_PERMISSION)
+  }
+
+  // 💡 권한이 부여되었을 때만 세션을 설정하도록 변경합니다.
+  if (hasPermission) {
+    // configure handtracking enabled
+    val newConfig = session.config.copy(handTracking = Config.HandTrackingMode.BOTH)
+    when (val result = session.configure(newConfig)) {
+      is SessionConfigureSuccess -> Log.d("tag", "Hand tracking configured successfully")
+      else -> Log.d("tag", "Hand tracking configuration failed")
+    }
+
+    LaunchedEffect(Unit) {
+      Hand.left(session)?.state?.collect { handState -> // or Hand.right(session)
+        val palmPose = handState.handJoints[HandJointType.PALM]
+        if (palmPose == null) return@collect
+        val transformedPose =
+          session.scene.perceptionSpace.transformPoseTo(
+            palmPose,
+            session.scene.activitySpace,
+          )
+        onPoseUpdated(transformedPose)
+        Log.d("UserHandTracking", "$palmPose -> $transformedPose")
+
+        // Hand state has been updated.
+        // Use the state of hand joints to update an entity's position.
+        // renderPlanetAtHandPalm(handState)
+
+      }
+    }
   }
 }
 
@@ -95,7 +168,7 @@ fun RoundedStarModel(getPose: () -> Pose?, modifier: SubspaceModifier = Subspace
 
   LaunchedEffect(Unit) {
     if (gltfModel == null) {
-      gltfModel = RoundedStarGltfModelCache.getOrLoadModel(xrSession, context)
+      gltfModel = RotatingObjectGltfModelCache.getOrLoadModel(xrSession, context, ModelType.STAR)
     }
   }
 
@@ -108,7 +181,7 @@ fun RoundedStarModel(getPose: () -> Pose?, modifier: SubspaceModifier = Subspace
         infiniteTransition.animateFloat(
           initialValue = 0f,
           targetValue = 360f,
-          animationSpec = infiniteRepeatable(tween(5000, easing = LinearEasing))
+          animationSpec = infiniteRepeatable(tween(3000, easing = LinearEasing))
         )
 
       LaunchedEffect(Unit) {
@@ -120,7 +193,6 @@ fun RoundedStarModel(getPose: () -> Pose?, modifier: SubspaceModifier = Subspace
                 val translation = currentPose.translation
                 entity.setPose(Pose(translation, rotation))
                 entity.setEnabled(true)
-
               } else {
                 entity.setEnabled(false)
               }
@@ -131,58 +203,144 @@ fun RoundedStarModel(getPose: () -> Pose?, modifier: SubspaceModifier = Subspace
       SceneCoreEntity(
         factory = {
           GltfModelEntity.create(xrSession, model).also { entity ->
-            gltfEntity = entity//.apply { setEnabled(false)  }
+            gltfEntity = entity // .apply { setEnabled(false)  }
           }
         },
         modifier = modifier.scale(0.2f)
       )
     }
   }
-  // Clean up the cache when the composable leaves the composition.
-  DisposableEffect(Unit) { onDispose { RoundedStarGltfModelCache.clearCache() } }
+  // Clean up the cache when the composable leaves the composition, not recomposition occurring
+  DisposableEffect(Unit) { onDispose { RotatingObjectGltfModelCache.clearCache() } }
 }
 
-private object RoundedStarGltfModelCache {
-  private var cachedModel: GltfModel? = null
+@ExperimentalComposeApi
+@OptIn(ExperimentalComposeApi::class, ExperimentalFoundationApi::class)
+@Composable
+fun SpatialExternalSurfaceContent() {
+  val context = LocalContext.current
+  Subspace {
+    SpatialExternalSurface(
+      modifier =
+        SubspaceModifier.width(1200.dp) // Default width is 400.dp if no width modifier is specified
+          .height(676.dp), // Default height is 400.dp if no height modifier is specified
+      // Use StereoMode.Mono, StereoMode.SideBySide, or StereoMode.TopBottom, depending
+      // upon which type of content you are rendering: monoscopic content, side-by-side stereo
+      // content, or top-bottom stereo content
+      stereoMode = StereoMode.SideBySide,
+    ) {
+      val exoPlayer = remember { ExoPlayer.Builder(context).build() }
+      Log.d("SpatialExternalSurfaceContent", "video uri creating")
 
-  @SuppressLint("RestrictedApi")
-  suspend fun getOrLoadModel(xrCoreSession: Session, context: Context): GltfModel? {
-    return if (cachedModel == null) {
-      val inputStream: InputStream = context.resources.openRawResource(R.raw.rounded_star)
-      cachedModel =
-        GltfModel.create(xrCoreSession, inputStream.readBytes(), assetKey = "ROUNDED_STAR")
-      cachedModel
-    } else {
-      cachedModel
+      // val videoUri = RawResourceDataSource.buildRawResourceUri(R.raw.sbs_video)
+      val videoUri =
+        Uri.Builder()
+          .scheme(ContentResolver.SCHEME_ANDROID_RESOURCE)
+          // Represents a side-by-side stereo video, where each frame contains a pair of
+          // video frames arranged side-by-side. The frame on the left represents the left
+          // eye view, and the frame on the right represents the right eye view.
+          .path("${R.raw.sbs_video}")
+          .build()
+      Log.d("SpatialExternalSurfaceContent", "video uri : $videoUri")
+      val mediaItem = MediaItem.fromUri(videoUri)
+
+      Log.d("SpatialExternalSurfaceContent", "mediaItem : $mediaItem")
+
+      // onSurfaceCreated is invoked only one time, when the Surface is created
+      onSurfaceCreated { surface ->
+        exoPlayer.setVideoSurface(surface)
+        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.prepare()
+        Log.d("SpatialExternalSurfaceContent", "exoPlayer : $exoPlayer")
+        exoPlayer.play()
+        Log.d("SpatialExternalSurfaceContent", "play called well... ")
+      }
+      // onSurfaceDestroyed is invoked when the SpatialExternalSurface composable and its
+      // associated Surface are destroyed
+      onSurfaceDestroyed { exoPlayer.release() }
     }
   }
-
-  fun clearCache() {
-    cachedModel = null
-  }
-
-  const val TAG = "RoundedStarGltfModelCache"
 }
 
-@OptIn(ExperimentalGetImage::class)
-@Composable
-fun FloatingObjects() {
-  var handPose by remember { mutableStateOf<Pose?>(null) }
+@SuppressLint("RestrictedApi")
+data class CameraInfo(val fx: Double, val fy: Double, val depthMeters: Float)
 
-  Subspace {
-    HandTrackingContent() { newPose -> handPose = newPose }
-    RoundedStarModel(
-      getPose = { handPose },
-      modifier = SubspaceModifier.fillMaxSize().offset(z = 400.dp)
-    )
-  }
+@SuppressLint("RestrictedApi")
+fun GetCameraInfo(
+  mpLandmarks: List<NormalizedLandmark>,
+  imageWidth: Int,
+  imageHeight: Int, // Height 추가 필요
+  fov: FieldOfView
+): CameraInfo { // Double -> Float 통일
+  val wrist = mpLandmarks[HandLandmark.WRIST]
+  val middleMcp = mpLandmarks[HandLandmark.MIDDLE_FINGER_MCP]
+
+  // 1. [중요] 정규화 좌표 -> 픽셀 좌표로 변환 (Aspect Ratio 문제 해결)
+  val wristX = wrist.x() * imageWidth
+  val wristY = wrist.y() * imageHeight
+  val middleX = middleMcp.x() * imageWidth
+  val middleY = middleMcp.y() * imageHeight
+
+  // 2. 픽셀 단위 거리 측정
+  val dx = wristX - middleX
+  val dy = wristY - middleY
+  val distanceInPixels = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+
+  Log.d("calculateDepthFromPalSize", "distance in pixels ${distanceInPixels}")
+  // 3. 초점 거리(fx) 계산 (픽셀 단위)
+  // fov.angleLeft + fov.angleRight 는 수평 FOV
+  val fovH = fov.angleLeft.absoluteValue + fov.angleRight.absoluteValue
+  val fovHRads = fovH.toDouble()
+
+  val fovScale = 2.0f // <- 이 값을 0.8, 0.9, 1.1, 1.2 등으로 바꿔보세요!
+
+  val fovVRads = fov.angleUp.absoluteValue + fov.angleDown.absoluteValue
+  val fy = (imageHeight / 2.0) / Math.tan(fovVRads / 2.0)
+  val fx = (imageWidth / 2.0) / Math.tan(fovHRads / 2.0)
+  Log.d("calculateDepthFromPalSize", "fx ${fx}.. , ${fov.angleLeft}, ${fov.angleRight}")
+
+  // 4. 깊이(Z) 역산
+  // 기준: 성인 손목~중지뿌리 거리 약 8~9cm (0.09m)
+  val realHandSizeMeters = 0.09f
+
+  // Z = (f * real_size) / pixel_size
+  val depthMeters = (fx * realHandSizeMeters) / distanceInPixels
+  Log.d("calculateDepthFromPalSize", "DepthMeters ${depthMeters}")
+
+  return CameraInfo(fx = fx * fovScale, fy = fy * fovScale, depthMeters.toFloat())
 }
 
+@SuppressLint("RestrictedApi")
+private fun calculatePalmPositionInCameraSpace(
+  handLandmarks: List<NormalizedLandmark>,
+  inputWidth: Int,
+  inputHeight: Int,
+  fov: FieldOfView
+): Vector3 {
+  val centerLandmark = handLandmarks[HandLandmark.MIDDLE_FINGER_MCP]
+
+  // 외부 함수 GetCameraInfo 호출 (Naming Convention 수정: snake_case -> camelCase)
+  val cameraInfo = GetCameraInfo(handLandmarks, inputWidth, inputHeight, fov)
+
+  // 좌표 변환 로직
+  // x: (norm - 0.5) * Width -> 중앙 기준 픽셀 좌표
+  // y: (0.5 - norm) * Height -> Y축 반전 및 중앙 기준
+  val pixelX = (centerLandmark.x() - 0.5f) * inputWidth
+  val pixelY = (0.5f - centerLandmark.y()) * inputHeight
+
+  // 역투영 공식 ($X = u * Z / f_x$)
+  val metricX = (pixelX * cameraInfo.depthMeters) / cameraInfo.fx
+  val metricY = (pixelY * cameraInfo.depthMeters) / cameraInfo.fy
+  val metricZ = -cameraInfo.depthMeters // 카메라는 -Z 방향을 바라봄
+
+  return Vector3(metricX.toFloat(), metricY.toFloat(), metricZ.toFloat())
+}
+
+@SuppressLint("RestrictedApi")
 @OptIn(ExperimentalGetImage::class)
 @Composable
-private fun HandTrackingContent(onPoseUpdated: (Pose?) -> Unit) {
-  val session = LocalSession.current
-  if (session == null) return
+fun HandTrackingContent(onPoseUpdated: (Pose?) -> Unit) {
+  val session = LocalSession.current ?: return
 
   var hasPermission by remember { mutableStateOf(false) }
   val context = LocalContext.current
@@ -193,9 +351,21 @@ private fun HandTrackingContent(onPoseUpdated: (Pose?) -> Unit) {
       onResult = { granted -> hasPermission = granted }
     )
 
-  LaunchedEffect(Unit) { permissionLauncher.launch(Manifest.permission.CAMERA) }
+  LaunchedEffect(Unit) {
+    val head_tracking_permission = "android.permission.HEAD_TRACKING"
+    permissionLauncher.launch(Manifest.permission.CAMERA)
+    permissionLauncher.launch(head_tracking_permission)
+  }
 
   if (hasPermission) {
+    /* on success for getting permission */
+    val newConfig =
+      session.config.copy(
+        headTracking = Config.HeadTrackingMode.LAST_KNOWN,
+      )
+    val result = session.configure(newConfig)
+
+    /*request for camera provider */
     var cameraProvider: ProcessCameraProvider? by remember { mutableStateOf(null) }
     LaunchedEffect(context) {
       ProcessCameraProvider.getInstance(context).also { future ->
@@ -230,7 +400,7 @@ private fun HandTrackingContent(onPoseUpdated: (Pose?) -> Unit) {
           provider.bindToLifecycle(
             lifecycleOwner,
             CameraSelector.DEFAULT_BACK_CAMERA,
-            imageAnalysis
+            imageAnalysis /*UseCase 는 CameraX에서 카메라 기능 단위를 추상화한 객체.*/
           )
         } catch (e: Exception) {
           Log.e("HandTrackingContent", "Use case binding failed", e)
@@ -240,26 +410,57 @@ private fun HandTrackingContent(onPoseUpdated: (Pose?) -> Unit) {
 
       LaunchedEffect(handLandmarkerHelper) {
         handLandmarkerHelper.resultBundle.collect { resultBundle ->
-          if (
-            resultBundle != null &&
-              resultBundle.results.isNotEmpty() &&
-              resultBundle.results.first().landmarks().isNotEmpty()
-          ) {
-            val hand = resultBundle.results.first().landmarks().first()
-            val centerLandmark = hand[9] // MIDDLE_FINGER_MCP
-
-            // Reverting to placeholder logic due to API limitations
-            val x = (centerLandmark.x() - 0.5f) * 2f
-            val y = (centerLandmark.y() - 0.5f) * -2f
-            val z = (centerLandmark.z() * -1f) - 0.5f
-            val pose = Pose(Vector3(x, y, z), Quaternion())
-            onPoseUpdated(pose)
-          } else {
+          val validResult = resultBundle?.results?.firstOrNull()
+          val handLandmarks = validResult?.landmarks()?.firstOrNull()
+          if (resultBundle == null || handLandmarks == null) {
             onPoseUpdated(null)
+            return@collect
           }
+
+          val cameraView = session.scene.spatialUser.cameraViews.firstNotNullOfOrNull { it.value }
+          if (cameraView == null) return@collect
+
+          val palmPositionInCameraSpace =
+            calculatePalmPositionInCameraSpace(
+              handLandmarks = handLandmarks,
+              inputWidth = resultBundle.inputImageWidth,
+              inputHeight = resultBundle.inputImageHeight,
+              fov = cameraView.fov
+            )
+
+          // 4. 월드 좌표계로 변환
+          val cameraPoseInWorld = cameraView.activitySpacePose
+          val handInActivitySpace = cameraPoseInWorld.transformPoint(palmPositionInCameraSpace)
+          val transformedPose = Pose(handInActivitySpace, Quaternion())
+
+          // 5. 상태 업데이트 및 로깅
+          onPoseUpdated(transformedPose)
+          Log.d("Handtracking", "PalmPose in ActivitySpace: $transformedPose")
         }
       }
     }
+  }
+}
+
+@ExperimentalComposeApi
+@OptIn(
+  ExperimentalGetImage::class,
+)
+@Composable
+fun FloatingObjects() {
+  var handPose by remember { mutableStateOf<Pose?>(null) }
+
+  Subspace {
+    HandTrackingContent() { newPose -> handPose = newPose }
+    RoundedStarModel(
+      getPose = { handPose },
+      modifier = SubspaceModifier.fillMaxSize().offset(z = 400.dp)
+    )
+    /*
+    UserHandTracking() {
+      //newPose -> handPose = newPose
+    }*/
+    // SpatialExternalSurfaceContent()
   }
 }
 
@@ -312,69 +513,15 @@ fun CreateMediaPlayer() {
   }*/
 }
 
+@kotlin.OptIn(ExperimentalComposeApi::class)
 @Composable
 fun HelloAndroidXRApp() {
   LogCapabilities()
   EnvironmentControls()
   FloatingObjects()
+
+  DebugPane()
+
   // CreateMediaPlayer()
 
 }
-
-  /** Layout that displays content in [SpatialPanel]s, should be used when spatial UI is enabled. */
-  /*
-  @Composable
-  private fun SpatialLayout(
-      primaryContent: @Composable () -> Unit,
-      firstSupportingContent: @Composable () -> Unit,
-      secondSupportingContent: @Composable () -> Unit
-  ) {
-      val animatedAlpha = remember { Animatable(0.5f) }
-      LaunchedEffect(Unit) {
-          launch {
-              animatedAlpha.animateTo(
-                  1.0f,
-                  animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing)
-              )
-          }
-      }
-      Subspace {
-          SpatialRow(modifier = SubspaceModifier.height(816.dp).fillMaxWidth()) {
-              SpatialColumn(modifier = SubspaceModifier.width(400.dp)) {
-                  SpatialPanel(
-                      SubspaceModifier
-                          .alpha(animatedAlpha.value)
-                          .size(400.dp)
-                          .padding(bottom = 16.dp)
-                          .movable()
-                          .resizable()
-                  ) {
-                      firstSupportingContent()
-                  }
-                  SpatialPanel(
-                      SubspaceModifier
-                          .alpha(animatedAlpha.value)
-                          .weight(1f)
-                          .movable()
-                          .resizable()
-                  ) {
-                      secondSupportingContent()
-                  }
-              }
-              SpatialPanel(
-                  modifier = SubspaceModifier
-                      .alpha(animatedAlpha.value)
-                      .fillMaxSize()
-                      .padding(left = 16.dp)
-                      .movable()
-                      .resizable()
-              ) {
-                  Column {
-                      TopAppBar()
-                      primaryContent()
-                  }
-              }
-          }
-      }
-  }
-  */

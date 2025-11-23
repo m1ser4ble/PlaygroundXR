@@ -55,6 +55,7 @@ dependencies {
   implementation(libs.androidx.runtime)
   implementation(libs.androidx.scenecore)
   implementation("com.google.mediapipe:tasks-vision:0.10.29")
+  implementation(libs.androidx.media3.exoplayer)
 
   testImplementation(libs.junit)
   androidTestImplementation(libs.androidx.junit)
